@@ -1,0 +1,863 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  final prefs = await SharedPreferences.getInstance();
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => FavoritesNotifier(prefs)),
+        ChangeNotifierProvider(create: (_) => CartNotifier(prefs)),
+      ],
+      child: const MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'La Italianu’',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        primarySwatch: Colors.red,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.red,
+          secondary: Colors.green,
+        ),
+        scaffoldBackgroundColor: Colors.white,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFFDA291C),
+          foregroundColor: Colors.white,
+        ),
+      ),
+      home: const HomeScreen(),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Models & Notifiers
+// ─────────────────────────────────────────────────────────────────────────────
+
+class Pizza {
+  final String name;
+  final String description;
+  final String imageUrl; // asset path
+  final List<String> tags;
+  final List<String> sizes;
+  final List<double> prices;
+  const Pizza({
+    required this.name,
+    required this.description,
+    required this.imageUrl,
+    required this.tags,
+    required this.sizes,
+    required this.prices,
+  });
+}
+
+class FavoritesNotifier extends ChangeNotifier {
+  static const _key = 'favorites';
+  final SharedPreferences _prefs;
+  Set<String> _favs;
+  FavoritesNotifier(this._prefs)
+      : _favs = (_prefs.getStringList(_key)?.toSet() ?? <String>{});
+  Set<String> get favorites => _favs;
+  bool isFavorite(String name) => _favs.contains(name);
+  void toggle(String name) {
+    if (_favs.contains(name)) _favs.remove(name);
+    else _favs.add(name);
+    _prefs.setStringList(_key, _favs.toList());
+    notifyListeners();
+  }
+}
+
+class CartItem {
+  final String name;
+  final String size;
+  final double price;
+  int quantity;
+  CartItem({
+    required this.name,
+    required this.size,
+    required this.price,
+    this.quantity = 1,
+  });
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'size': size,
+    'price': price,
+    'quantity': quantity,
+  };
+  static CartItem fromJson(Map<String, dynamic> j) => CartItem(
+    name: j['name'],
+    size: j['size'],
+    price: (j['price'] as num).toDouble(),
+    quantity: j['quantity'] as int? ?? 1,
+  );
+}
+
+class CartNotifier extends ChangeNotifier {
+  static const _key = 'cart';
+  final SharedPreferences _prefs;
+  List<CartItem> _items = [];
+  CartNotifier(this._prefs) {
+    final saved = _prefs.getStringList(_key);
+    if (saved != null) {
+      _items = saved
+          .map((e) => CartItem.fromJson(jsonDecode(e) as Map<String, dynamic>))
+          .toList();
+    }
+  }
+  List<CartItem> get items => _items;
+  double get total => _items.fold(0, (sum, i) => sum + i.price * i.quantity);
+  void _save() {
+    _prefs.setStringList(
+      _key,
+      _items.map((i) => jsonEncode(i.toJson())).toList(),
+    );
+  }
+  void add(CartItem item) {
+    final existing = _items.firstWhere(
+          (i) => i.name == item.name && i.size == item.size,
+      orElse: () => CartItem(name: '', size: '', price: 0),
+    );
+    if (existing.name.isNotEmpty) {
+      existing.quantity += item.quantity;
+    } else {
+      _items.add(item);
+    }
+    _save();
+    notifyListeners();
+  }
+  void increment(int idx) {
+    if (_items[idx].quantity < 999) _items[idx].quantity++;
+    _save();
+    notifyListeners();
+  }
+  void decrement(int idx) {
+    final it = _items[idx];
+    if (it.quantity > 1) it.quantity--;
+    else _items.removeAt(idx);
+    _save();
+    notifyListeners();
+  }
+  /// remove item at [index], for Dismissible
+  void removeAt(int index) {
+    if (index < 0 || index >= _items.length) return;
+    _items.removeAt(index);
+    _save();
+    notifyListeners();
+  }
+  void clear() {
+    _items.clear();
+    _save();
+    notifyListeners();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pizza Data (7 pizzas)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const List<Pizza> pizzas = [
+  Pizza(
+    name: 'Pepperoni',
+    description: 'Salam picant cu mozzarella și oregano.',
+    imageUrl: 'assets/images/pepperoni.png',
+    tags: ['picant', 'cu carne'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [26.99, 31.99, 36.99],
+  ),
+  Pizza(
+    name: 'Margherita',
+    description: 'Clasică cu sos de roșii, mozzarella și busuioc proaspăt.',
+    imageUrl: 'assets/images/margherita.png',
+    tags: ['vegetariană'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [24.99, 29.99, 34.99],
+  ),
+  Pizza(
+    name: 'Quattro Formaggi',
+    description:
+    'Patru brânzeturi: mozzarella, gorgonzola, parmesan și fontina.',
+    imageUrl: 'assets/images/quattro_formaggi.png',
+    tags: ['vegetariană', 'cu lactoză', 'gluten'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [27.49, 32.49, 37.49],
+  ),
+  Pizza(
+    name: 'Prosciutto e Funghi',
+    description: 'Șuncă de Parma și ciuperci champignon cu mozzarella.',
+    imageUrl: 'assets/images/prosciutto_funghi.png',
+    tags: ['cu carne', 'gluten', 'cu lactoză'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [25.99, 30.99, 35.99],
+  ),
+  Pizza(
+    name: 'Diavola',
+    description: 'Salam picant, fulgi de chili și sos de roșii.',
+    imageUrl: 'assets/images/diavola.png',
+    tags: ['picant', 'cu carne', 'gluten'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [26.49, 31.49, 36.49],
+  ),
+  Pizza(
+    name: 'Capricciosa',
+    description: 'Șuncă, ciuperci, anghinare și măsline negre.',
+    imageUrl: 'assets/images/capricciosa.png',
+    tags: ['cu carne', 'gluten', 'cu lactoză'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [28.49, 33.49, 38.49],
+  ),
+  Pizza(
+    name: 'Vegetariană',
+    description: 'Ardei, porumb, cascaval vegetal.',
+    imageUrl: 'assets/images/vegetariana.png',
+    tags: ['vegetariană', 'gluten', 'cu lactoză'],
+    sizes: ['Mică', 'Medie', 'Mare'],
+    prices: [24.49, 29.49, 34.49],
+  ),
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HomeScreen & Bottom Navigation
+// ─────────────────────────────────────────────────────────────────────────────
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+class _HomeScreenState extends State<HomeScreen> {
+  int _currentIndex = 0;
+  static final List<Widget> _pages = <Widget>[
+    const HomePage(),
+    const MenuPage(),
+    const FavoritesPage(),
+    const AccountPage(),
+  ];
+  void _onTap(int i) => setState(() => _currentIndex = i);
+  @override
+  Widget build(BuildContext context) {
+    final cartCount = context.watch<CartNotifier>().items.fold<int>(
+      0,
+          (sum, i) => sum + i.quantity,
+    );
+    return Scaffold(
+      appBar: AppBar(title: const Text("La Italianu'")),
+      body: _pages[_currentIndex],
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CartPage()),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Icon(Icons.shopping_cart),
+            if (cartCount > 0)
+              Positioned(
+                right: 0,
+                top: 0,
+                child: CircleAvatar(
+                  radius: 8,
+                  backgroundColor: Colors.white,
+                  child: Text(
+                    '$cartCount',
+                    style: const TextStyle(fontSize: 10, color: Colors.red),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
+        currentIndex: _currentIndex,
+        onTap: _onTap,
+        selectedItemColor: Colors.white,
+        unselectedItemColor: Colors.white70,
+        backgroundColor: Theme.of(context).primaryColor,
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Acasă'),
+          BottomNavigationBarItem(icon: Icon(Icons.menu_book), label: 'Meniu'),
+          BottomNavigationBarItem(icon: Icon(Icons.favorite), label: 'Favorite'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Cont'),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HomePage (“Încercați și”)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+  List<Pizza> get bestSellers => pizzas.take(3).toList();
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Încercați și:',
+          style: Theme.of(context)
+              .textTheme
+              .titleLarge
+              ?.copyWith(color: Colors.red),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          height: 160,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: bestSellers.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 12),
+            itemBuilder: (ctx, i) {
+              final p = bestSellers[i];
+              return GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => DetailPage(pizza: p)),
+                ),
+                child: SizedBox(
+                  width: 140,
+                  child: Card(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    clipBehavior: Clip.hardEdge,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset(
+                          p.imageUrl,
+                          height: 80,
+                          width: 80,
+                          fit: BoxFit.cover,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(p.name, textAlign: TextAlign.center),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MenuPage (bigger, centered avatars)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class MenuPage extends StatelessWidget {
+  const MenuPage({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final favs = context.watch<FavoritesNotifier>();
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: pizzas.length,
+      itemBuilder: (ctx, i) {
+        final pizza = pizzas[i];
+        return SizedBox(
+          height: 180,
+          child: Card(
+            margin: const EdgeInsets.symmetric(vertical: 8),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            elevation: 3,
+            child: Center(
+              child: ListTile(
+                contentPadding: const EdgeInsets.all(16),
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 120,
+                    height: 120,
+                    color: Colors.grey[100],
+                    child: Center(
+                      child: Image.asset(
+                        pizza.imageUrl,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ),
+                ),
+                title: Text(pizza.name, style: const TextStyle(fontSize: 18)),
+                subtitle: Text('${pizza.prices[1].toStringAsFixed(2)} Lei'),
+                trailing: IconButton(
+                  icon: Icon(
+                    favs.isFavorite(pizza.name)
+                        ? Icons.favorite
+                        : Icons.favorite_border,
+                    color: favs.isFavorite(pizza.name)
+                        ? Colors.red
+                        : Colors.grey,
+                  ),
+                  onPressed: () => favs.toggle(pizza.name),
+                ),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => DetailPage(pizza: pizza)),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FavoritesPage (green delete)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class FavoritesPage extends StatelessWidget {
+  const FavoritesPage({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final favs = context.watch<FavoritesNotifier>();
+    final favList = pizzas.where((p) => favs.isFavorite(p.name)).toList();
+    if (favList.isEmpty) {
+      return const Center(child: Text('Nu aveți favorite'));
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: favList.length,
+      itemBuilder: (ctx, i) {
+        final p = favList[i];
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 8),
+          child: Center(
+            child: ListTile(
+              leading: Image.asset(p.imageUrl, width: 48, height: 48),
+              title: Text(p.name),
+              subtitle: Text('${p.prices[1].toStringAsFixed(2)} Lei'),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete),
+                color: Colors.green,
+                onPressed: () => favs.toggle(p.name),
+              ),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => DetailPage(pizza: p)),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetailPage (side-by-side + green accents)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class DetailPage extends StatefulWidget {
+  final Pizza pizza;
+  const DetailPage({super.key, required this.pizza});
+  @override
+  State<DetailPage> createState() => _DetailPageState();
+}
+class _DetailPageState extends State<DetailPage> {
+  int _selected = 0, _quantity = 1;
+  void _orderNow() {
+    final cart = context.read<CartNotifier>();
+    cart.add(CartItem(
+      name: widget.pizza.name,
+      size: widget.pizza.sizes[_selected],
+      price: widget.pizza.prices[_selected],
+      quantity: _quantity,
+    ));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const CartPage()),
+    );
+  }
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.pizza;
+    return Scaffold(
+      appBar: AppBar(title: Text(p.name)),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+              flex: 4,
+              child: Center(
+                child: Image.asset(
+                  p.imageUrl,
+                  height: 200,
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 5,
+              child: Text(
+                p.description,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ),
+          ]),
+          const SizedBox(height: 24),
+          Text('Alege mărimea:',
+              style: Theme.of(context).textTheme.bodyLarge),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: List.generate(p.sizes.length, (i) {
+              return ChoiceChip(
+                label: Text(
+                    '${p.sizes[i]} (${p.prices[i].toStringAsFixed(2)} Lei)'),
+                selected: _selected == i,
+                onSelected: (_) => setState(() => _selected = i),
+                selectedColor: Colors.green.shade200,
+              );
+            }),
+          ),
+          const SizedBox(height: 16),
+          Text('Cantitate:', style: Theme.of(context).textTheme.bodyLarge),
+          Row(children: [
+            IconButton(
+                icon: const Icon(Icons.remove),
+                onPressed:
+                _quantity > 1 ? () => setState(() => _quantity--) : null),
+            Text('$_quantity',
+                style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
+            IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: () => setState(() => _quantity++)),
+          ]),
+        ]),
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.shopping_cart),
+            label: Text(
+                'Adaugă în coș (${(_quantity * p.prices[_selected]).toStringAsFixed(2)} Lei)'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            onPressed: _orderNow,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CartPage
+// ─────────────────────────────────────────────────────────────────────────────
+
+class CartPage extends StatelessWidget {
+  const CartPage({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartNotifier>();
+    return Scaffold(
+      appBar: AppBar(title: const Text('Coșul tău')),
+      body: cart.items.isEmpty
+          ? const Center(child: Text('Coșul este gol'))
+          : ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: cart.items.length,
+        itemBuilder: (ctx, i) {
+          final it = cart.items[i];
+          return Dismissible(
+            key: ValueKey('$i${it.name}${it.size}'),
+            background: Container(
+              color: Colors.red,
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 20),
+              child: const Icon(Icons.delete, color: Colors.white),
+            ),
+            onDismissed: (_) => cart.removeAt(i),
+            child: Center(
+              child: ListTile(
+                title: Text('${it.name} (${it.size})'),
+                subtitle:
+                Text('${(it.price * it.quantity).toStringAsFixed(2)} Lei'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove),
+                      onPressed: () => cart.decrement(i),
+                    ),
+                    Text('${it.quantity}'),
+                    IconButton(
+                      icon: const Icon(Icons.add),
+                      onPressed: () => cart.increment(i),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: ElevatedButton(
+            child: Text('Checkout (${cart.total.toStringAsFixed(2)} Lei)'),
+            onPressed: cart.items.isEmpty
+                ? null
+                : () async {
+              final method = await showDialog<String>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Checkout'),
+                  content: const Text('Plătiți cash sau card?'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, 'Cash'),
+                        child: const Text('Cash')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(ctx, 'Card'),
+                        child: const Text('Card')),
+                  ],
+                ),
+              );
+              if (method != null && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Plată cu $method!')),
+                );
+                cart.clear();
+              }
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Account / Sign In / Sign Up
+// ─────────────────────────────────────────────────────────────────────────────
+
+class AccountPage extends StatefulWidget {
+  const AccountPage({super.key});
+  @override
+  State<AccountPage> createState() => _AccountPageState();
+}
+class _AccountPageState extends State<AccountPage>
+    with AutomaticKeepAliveClientMixin {
+  User? _user;
+  @override
+  bool get wantKeepAlive => true;
+  @override
+  void initState() {
+    super.initState();
+    FirebaseAuth.instance.authStateChanges().listen((u) {
+      setState(() => _user = u);
+    });
+  }
+  Future<void> _signOut() async => FirebaseAuth.instance.signOut();
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (_user == null) {
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ElevatedButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SignInPage())),
+            child: const Text('Autentificare'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SignUpPage())),
+            child: const Text('Înregistrare'),
+          ),
+        ]),
+      );
+    }
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      Text('Autentificat ca',
+          style: Theme.of(context).textTheme.bodyMedium),
+      Text(_user!.email ?? '',
+          style: Theme.of(context).textTheme.titleLarge),
+      const Divider(height: 32),
+      ListTile(
+        leading: const Icon(Icons.logout),
+        title: const Text('Ieșire din cont'),
+        onTap: _signOut,
+      ),
+    ]);
+  }
+}
+
+class SignInPage extends StatefulWidget {
+  const SignInPage({super.key});
+  @override
+  State<SignInPage> createState() => _SignInPageState();
+}
+class _SignInPageState extends State<SignInPage> {
+  final _formKey = GlobalKey<FormState>();
+  String _email = '', _password = '', _error = '';
+  Future<void> _submit() async {
+    setState(() => _error = '');
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    _formKey.currentState!.save();
+    try {
+      await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: _email, password: _password);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      setState(() => _error = 'Autentificare eșuată: $e');
+    }
+  }
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Autentificare')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+            key: _formKey,
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_error.isNotEmpty) ...[
+                    Text(_error,
+                        style: const TextStyle(color: Colors.red)),
+                    const SizedBox(height: 8),
+                  ],
+                  TextFormField(
+                    decoration: const InputDecoration(labelText: 'Email'),
+                    onSaved: (v) => _email = v!.trim(),
+                    validator: (v) => (v?.contains('@') ?? false)
+                        ? null
+                        : 'Email invalid',
+                  ),
+                  TextFormField(
+                    decoration: const InputDecoration(labelText: 'Parolă'),
+                    obscureText: true,
+                    onSaved: (v) => _password = v!.trim(),
+                    validator: (v) => (v != null && v.length >= 6)
+                        ? null
+                        : 'Minim 6 caractere',
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                      onPressed: _submit,
+                      child: const Text('Autentificare')),
+                ])),
+      ),
+    );
+  }
+}
+
+class SignUpPage extends StatefulWidget {
+  const SignUpPage({super.key});
+  @override
+  State<SignUpPage> createState() => _SignUpPageState();
+}
+class _SignUpPageState extends State<SignUpPage> {
+  final _formKey = GlobalKey<FormState>();
+  String _email = '', _password = '', _confirm = '', _error = '';
+  Future<void> _submit() async {
+    setState(() => _error = '');
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    _formKey.currentState!.save();
+    if (_password != _confirm) {
+      setState(() => _error = 'Parolele nu coincid');
+      return;
+    }
+    try {
+      await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: _email, password: _password);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Cont creat!')));
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      setState(() => _error = 'Înregistrare eșuată: $e');
+    }
+  }
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+        appBar: AppBar(title: const Text('Înregistrare')),
+        body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Form(
+                key: _formKey,
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_error.isNotEmpty) ...[
+                        Text(_error,
+                            style:
+                            const TextStyle(color: Colors.red)),
+                        const SizedBox(height: 8),
+                      ],
+                      TextFormField(
+                        decoration:
+                        const InputDecoration(labelText: 'Email'),
+                        onSaved: (v) => _email = v!.trim(),
+                        validator: (v) =>
+                        (v?.contains('@') ?? false)
+                            ? null
+                            : 'Email invalid',
+                      ),
+                      TextFormField(
+                        decoration:
+                        const InputDecoration(labelText: 'Parolă'),
+                        obscureText: true,
+                        onSaved: (v) => _password = v!.trim(),
+                        validator: (v) =>
+                        (v != null && v.length >= 6)
+                            ? null
+                            : 'Minim 6 caractere',
+                      ),
+                      TextFormField(
+                        decoration: const InputDecoration(
+                            labelText: 'Confirmă parola'),
+                        obscureText: true,
+                        onSaved: (v) => _confirm = v!.trim(),
+                        validator: (v) =>
+                        (v != null && v.length >= 6)
+                            ? null
+                            : 'Minim 6 caractere',
+                      ),
+                      const SizedBox(height: 20),
+                      ElevatedButton(
+                          onPressed: _submit,
+                          child: const Text('Înregistrare')),
+                    ]))));
+  }
+}
